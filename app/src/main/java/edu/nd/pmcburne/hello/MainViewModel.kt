@@ -1,41 +1,59 @@
 package edu.nd.pmcburne.hello
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import edu.nd.pmcburne.hello.data.AppDatabase
+import edu.nd.pmcburne.hello.data.LocationEntity
+import edu.nd.pmcburne.hello.data.LocationRepository
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class MainUIState(
-    val counterValue: Int
+    val selectedTag: String = "core",
+    val locations: List<LocationEntity> = emptyList(),
+    val availableTags: List<String> = emptyList()
 )
 
-class MainViewModel(
-    val initialCounterValue: Int = 0
-) : ViewModel() {
-    private val _uiState = MutableStateFlow(MainUIState(initialCounterValue))
-    val uiState: StateFlow<MainUIState> = _uiState.asStateFlow()
+class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository: LocationRepository
+    
+    private val _selectedTag = MutableStateFlow("core")
+    val selectedTag = _selectedTag.asStateFlow()
 
-    fun incrementCounter() {
-        _uiState.update{ currentState ->
-            currentState.copy(counterValue = _uiState.value.counterValue + 1)
+    init {
+        val database = AppDatabase.getDatabase(application)
+        repository = LocationRepository(database.locationDao())
+        
+        viewModelScope.launch {
+            repository.refreshLocations()
         }
     }
 
-    fun decrementCounter() {
-        _uiState.update{ currentState ->
-            currentState.copy(counterValue = _uiState.value.counterValue - 1)
-        }
-    }
+    val uiState: StateFlow<MainUIState> = combine(
+        repository.allLocations,
+        _selectedTag
+    ) { locations, selectedTag ->
+        val tags = locations.flatMap { it.tags }.distinct().sorted()
+        val filteredLocations = locations.filter { it.tags.contains(selectedTag) }
+        MainUIState(
+            selectedTag = selectedTag,
+            locations = filteredLocations,
+            availableTags = tags
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = MainUIState()
+    )
 
-    fun resetCounter() {
-        _uiState.update { currentState ->
-            currentState.copy(counterValue = 0)
-        }
+    fun onTagSelected(tag: String) {
+        _selectedTag.update { tag }
     }
-
-    val isDecrementEnabled: Boolean
-        get() = _uiState.value.counterValue > 0
-    val isResetEnabled: Boolean
-        get() = _uiState.value.counterValue > 0
 }
